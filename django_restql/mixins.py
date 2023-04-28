@@ -2,6 +2,7 @@ from django.db.models import Prefetch
 from django.db.models.fields.related import ManyToManyRel, ManyToOneRel
 from django.http import QueryDict
 from django.utils.functional import cached_property
+from django.utils.translation import gettext_lazy as _, get_language
 
 from rest_framework.serializers import (
     ListSerializer, Serializer, ValidationError
@@ -15,6 +16,7 @@ from .fields import (
 from .operations import ADD, CREATE, REMOVE, UPDATE
 from .parser import Query, QueryParser
 from .settings import restql_settings
+from .tools import flatten
 
 
 class RequestQueryParserMixin(object):
@@ -1031,3 +1033,161 @@ class NestedUpdateMixin(BaseNestedMixin):
         )
 
         return instance
+
+
+class OptimizedEagerLoadingMixin(EagerLoadingMixin):
+    only = {}
+    always_apply_only = False
+    to_select = []
+
+    @property
+    def should_always_apply_only(self):
+        if hasattr(self, "always_apply_only"):
+            return self.always_apply_only
+        return False
+
+    def get_only_mapping(self):
+        if hasattr(self, "only"):
+            return self.only
+        return {}
+
+    def apply_eager_loading(self, queryset):
+        """
+        Applies appropriate select_related and prefetch_related calls on a
+        queryset
+        """
+        query = self.get_dict_parsed_restql_query(self.parsed_restql_query)
+        select_mapping = self.get_select_related_mapping()
+        prefetch_mapping = self.get_prefetch_related_mapping()
+
+        self.to_select = self.get_related_fields(select_mapping, query)
+        to_prefetch = self.get_related_fields(prefetch_mapping, query)
+
+        if self.to_select:
+            queryset = queryset.select_related(*self.to_select)
+        if to_prefetch:
+            queryset = queryset.prefetch_related(*to_prefetch)
+
+        return self.apply_only(queryset, query)
+
+    def apply_only(self, queryset, query):
+        """
+        Applies .only() on queryset with fields specified by user in query params.
+        Exclude operator (-) is not being handled.
+        """
+        serializer_fields = self.get_serializer().fields.keys()
+        only_mapping = self.get_only_mapping()
+        model = queryset.model
+        fields_to_only = []
+
+        if hasattr(model, "polymorphic_ctype"):
+            fields_to_only.append("polymorphic_ctype")
+
+        if "*" in query.keys() or any([key.startswith("-") for key in query.keys()]):
+            if self.should_always_apply_only:
+                to_select_fk_fields = {field.split("__")[0] for field in self.to_select}
+                only_mapping_values = flatten(only_mapping.values())
+                only_mapping_values_fk_fields = {
+                    field.split("__")[0]
+                    for field in only_mapping_values
+                    if field != "*"
+                }
+
+                all_fields = set(serializer_fields) - set(only_mapping.keys())
+                all_fields.update(to_select_fk_fields)
+                all_fields.update(only_mapping_values_fk_fields)
+                all_fields.update(fields_to_only)
+
+                all_fields = self.parse_model_fields(
+                    model, all_fields, skip_non_model_fields=False
+                )
+                # Applying only on queryset with all serializer fields except custom
+                # fields from 'only_mapping' in order to check whether all custom fields
+                # are mapped correctly. Should throw FieldDoesNotExist otherwise.
+                queryset = queryset.only(*all_fields)
+            return queryset
+
+        nested_fields_to_only = []
+        custom_fields_to_only = []
+        to_select = set()
+
+        for key, value in query.items():
+            # Handling custom fields such as "SerializerMethodField"
+            # or "StringRelatedField" by adding specified fields from "only" variable
+            # and select related fk fields in case they were not
+            custom_only = only_mapping.get(key)
+            if custom_only and custom_only != "*":
+                custom_only = (
+                    custom_only
+                    if isinstance(custom_only, (list, tuple, set))
+                    else [custom_only]
+                )
+                custom_fields_to_only += custom_only
+
+                for field in custom_only:
+                    field_split = field.split("__")
+                    select_related_keys = self.get_select_related_mapping().keys()
+                    field_in_select_related = field_split[0] in select_related_keys
+                    if len(field_split) == 2 and field_in_select_related:
+                        to_select.add(field_split[0])
+
+            if isinstance(value, dict):
+                nested_keys = list(value.keys())
+                if "*" in nested_keys:
+                    fields_to_only.append(key)
+                # Exclude operator not handled
+                elif any([nested_key.startswith("-") for nested_key in nested_keys]):
+                    return queryset
+                elif key not in only_mapping.keys():
+                    nested_field_model = model._meta.get_field(key).related_model
+                    nested_fields = self.parse_model_fields(
+                        nested_field_model, nested_keys
+                    )
+                    nested_fields_to_only += [
+                        f"{key}__{item}" for item in nested_fields
+                    ]
+            else:
+                fields_to_only.append(key)
+
+        if to_select:
+            queryset = queryset.select_related(*to_select)
+
+        fields_to_only = self.parse_model_fields(model, fields_to_only)
+        fields_to_only += nested_fields_to_only
+        fields_to_only += custom_fields_to_only
+
+        return queryset.only(*fields_to_only)
+
+    def get_queryset(self):
+        query_param_name = restql_settings.QUERY_PARAM_NAME
+        query_in_params = self.request.query_params.get(query_param_name)
+        if restql_settings.FORCE_QUERY_USAGE and not query_in_params:
+            raise ValidationError(
+                _(f"Parametr '{query_param_name}' musi zostać zdefiniowany.")
+            )
+        return super().get_queryset()
+
+    def parse_model_fields(self, model, fields, skip_non_model_fields=True):
+        results = []
+        lang = get_language()
+        model_fields = {field.name for field in model._meta.get_fields()}
+        many_to_one_rel_fields = {
+            field.name
+            for field in model._meta.get_fields()
+            if isinstance(field, ManyToOneRel)
+        }
+
+        for field in fields:
+            if field in many_to_one_rel_fields:
+                continue
+
+            if field not in model_fields:
+                translated_field = f"{field}_{lang}"
+                if translated_field in model_fields:
+                    results.append(translated_field)
+                    continue
+                if skip_non_model_fields:
+                    continue
+            results.append(field)
+
+        return results

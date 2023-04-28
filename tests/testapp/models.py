@@ -1,4 +1,5 @@
 from django.db import models
+from translated_fields import TranslatedField
 
 
 class Genre(models.Model):
@@ -35,3 +36,37 @@ class Phone(models.Model):
     number = models.CharField(max_length=15)
     type = models.CharField(max_length=50)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="phone_numbers")
+
+
+class SampleAuthor(models.Model):
+    first_name = models.TextField()
+    last_name = models.TextField()
+
+    def __str__(self):
+        return self.first_name
+
+
+class SampleTag(models.Model):
+    name = models.TextField()
+
+
+class SamplePost(models.Model):
+    text = models.TextField()
+    title = models.TextField()
+    author = models.ForeignKey(
+        SampleAuthor, on_delete=models.CASCADE, related_name="posts"
+    )
+    tags = models.ManyToManyField(SampleTag, related_name="+")
+
+
+class SamplePlace(models.Model):
+    name = TranslatedField(models.TextField())
+    slug = models.CharField(max_length=64)
+    address = models.TextField()
+
+
+class SampleEvent(models.Model):
+    title = TranslatedField(models.TextField())
+    type = models.CharField(max_length=16)
+    description = TranslatedField(models.TextField())
+    place = models.ForeignKey(SamplePlace, on_delete=models.CASCADE)
