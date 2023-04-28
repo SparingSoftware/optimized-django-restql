@@ -33,7 +33,7 @@ author_email = get_info('__author_email__')
 readme = get_readme()
 
 setup(
-    name='django-restql',
+    name='optimized-django-restql',
     version=version,
     description=description,
     long_description=readme,
