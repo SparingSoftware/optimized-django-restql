@@ -574,7 +574,7 @@ class BaseNestedMixin(object):
     def restql_writable_nested_fields(self):
         # Make field_source -> field_value map for restql nested fields
         writable_nested_fields = {}
-        for _, field in self.fields.items():
+        for __, field in self.fields.items():
             # Get the actual source of the field
             if isinstance(field, BaseRESTQLNestedField):
                 writable_nested_fields.update({field.source: field})
