@@ -1,7 +1,8 @@
 # Required
 pypeg2>=2.15.2
 django-translated-fields==0.11.3
-model-bakery==1.3.3
+model-bakery
+pytest==8.1.1
 
 # Don't include these two below as they are already included in tox.ini
 # Django>=1.11

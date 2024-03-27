@@ -1,4 +1,5 @@
 from django.db.models import Prefetch
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.fields.related import ManyToManyRel, ManyToOneRel
 from django.http import QueryDict
 from django.utils.functional import cached_property
@@ -573,7 +574,7 @@ class BaseNestedMixin(object):
     def restql_writable_nested_fields(self):
         # Make field_source -> field_value map for restql nested fields
         writable_nested_fields = {}
-        for _, field in self.fields.items():
+        for __, field in self.fields.items():
             # Get the actual source of the field
             if isinstance(field, BaseRESTQLNestedField):
                 writable_nested_fields.update({field.source: field})
@@ -599,7 +600,7 @@ class NestedCreateMixin(BaseNestedMixin):
                 # Reject partial update by default(if partial kwarg is not passed)
                 # since we need all required fields when creating object
                 partial=nested_field_serializer.is_partial(False),
-                context=self.context
+                context={**self.context, "parent_operation": CREATE}
             )
             serializer.is_valid(raise_exception=True)
             if value is None:
@@ -624,7 +625,7 @@ class NestedCreateMixin(BaseNestedMixin):
                 # Reject partial update by default(if partial kwarg is not passed)
                 # since we need all required fields when creating object
                 partial=nested_field_serializer.is_partial(False),
-                context=self.context,
+                context={**self.context, "parent_operation": CREATE},
             )
             serializer.is_valid(raise_exception=True)
             obj = serializer.save()
@@ -772,7 +773,7 @@ class NestedUpdateMixin(BaseNestedMixin):
                 # Allow partial update by default(if partial kwarg is not passed)
                 # since this is nested update
                 partial=nested_field_serializer.is_partial(True),
-                context=self.context
+                context={**self.context, "parent_operation": UPDATE}
             )
             serializer.is_valid(raise_exception=True)
             if values is None:
@@ -800,7 +801,7 @@ class NestedUpdateMixin(BaseNestedMixin):
                 # Reject partial update by default(if partial kwarg is not passed)
                 # since we need all required fields when creating object
                 partial=nested_field_serializer.is_partial(False),
-                context=self.context
+                context={**self.context, "parent_operation": CREATE}
             )
             serializer.is_valid(raise_exception=True)
             obj = serializer.save()
@@ -821,7 +822,7 @@ class NestedUpdateMixin(BaseNestedMixin):
                 # Reject partial update by default(if partial kwarg is not passed)
                 # since we need all required fields when creating object
                 partial=nested_field_serializer.is_partial(False),
-                context=self.context
+                context={**self.context, "parent_operation": CREATE}
             )
             serializer.is_valid(raise_exception=True)
             obj = serializer.save()
@@ -836,7 +837,11 @@ class NestedUpdateMixin(BaseNestedMixin):
         serializer_class = nested_field_serializer.serializer_class
         kwargs = nested_field_serializer.validation_kwargs
         for pk, values in data.items():
-            obj = nested_obj.get(pk=pk)
+            try:
+                obj = nested_obj.get(pk=pk)
+            except ObjectDoesNotExist:
+                # This pk does't belong to nested field
+                continue
             serializer = serializer_class(
                 obj,
                 **kwargs,
@@ -844,7 +849,7 @@ class NestedUpdateMixin(BaseNestedMixin):
                 # Allow partial update by default(if partial kwarg is not passed)
                 # since this is nested update
                 partial=nested_field_serializer.is_partial(True),
-                context=self.context
+                context={**self.context, "parent_operation": UPDATE}
             )
             serializer.is_valid(raise_exception=True)
             obj = serializer.save()
@@ -860,7 +865,11 @@ class NestedUpdateMixin(BaseNestedMixin):
         foreignkey = getattr(model, field).field.name
         nested_obj = getattr(instance, field)
         for pk, values in data.items():
-            obj = nested_obj.get(pk=pk)
+            try:
+                obj = nested_obj.get(pk=pk)
+            except ObjectDoesNotExist:
+                # This pk does't belong to nested field
+                continue
             values.update({foreignkey: instance.pk})
             serializer = serializer_class(
                 obj,
@@ -869,7 +878,7 @@ class NestedUpdateMixin(BaseNestedMixin):
                 # Allow partial update by default(if partial kwarg is not passed)
                 # since this is nested update
                 partial=nested_field_serializer.is_partial(True),
-                context=self.context
+                context={**self.context, "parent_operation": UPDATE}
             )
             serializer.is_valid(raise_exception=True)
             obj = serializer.save()
