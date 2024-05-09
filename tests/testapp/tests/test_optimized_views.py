@@ -4,9 +4,8 @@ from django.urls import path, reverse
 from django_restql.mixins import DynamicFieldsMixin, OptimizedEagerLoadingMixin
 from model_bakery import baker
 from rest_framework import serializers, status
-from rest_framework.generics import ListAPIView
+from rest_framework.generics import ListAPIView, UpdateAPIView
 
-from django_restql.settings import restql_settings
 from tests.testapp.models import SampleAuthor, SamplePost, SampleTag
 from tests.testapp.tests.helpers import get_fields_queried
 
@@ -17,20 +16,29 @@ class SampleAuthorSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
         fields = ("id", "first_name", "last_name")
 
 
+class ShortSamplePostSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
+    class Meta:
+        model = SamplePost
+        fields = ("id", "text")
+
+
 class SampleAuthorFullSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
+    posts = ShortSamplePostSerializer(many=True)
+
     class Meta:
         model = SampleAuthor
         fields = ("id", "first_name", "last_name", "posts")
 
 
 class SamplePostSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
-    author = SampleAuthorSerializer()
+    author = SampleAuthorSerializer(required=False)
     first_letter = serializers.SerializerMethodField()
     author_str = serializers.StringRelatedField(source="author")
 
     class Meta:
         model = SamplePost
         fields = ("id", "text", "title", "author", "first_letter", "author_str")
+        read_only_fields = fields
 
     def get_first_letter(self, obj):
         return obj.title[0]
@@ -58,6 +66,7 @@ class SamplePostSmallSerializer(DynamicFieldsMixin, serializers.ModelSerializer)
 
 class SampleViewSet(
     OptimizedEagerLoadingMixin,
+    UpdateAPIView,
     ListAPIView,
 ):
     queryset = SamplePost.objects.all()
@@ -81,14 +90,15 @@ class SampleAuthorViewSet(
     serializer_class = SampleAuthorFullSerializer
     permission_classes = []
     select_related = {}
-    prefetch_related = {}
+    prefetch_related = {"posts": "posts"}
     pagination_class = None
     always_apply_only = True
 
 
 urlpatterns = [
     path("", SampleViewSet.as_view(), name="view"),
-    path("authors/", SampleViewSet.as_view(), name="authors-view"),
+    path("<int:pk>", SampleViewSet.as_view(), name="view-update"),
+    path("authors/", SampleAuthorViewSet.as_view(), name="authors-view"),
 ]
 
 
@@ -289,10 +299,9 @@ class TestOnlyInEagerLoading:
 
     @pytest.mark.urls(__name__)
     def test_force_query_usage(
-        self, client, django_assert_max_num_queries, instance, url
+        self, client, instance, url, settings
     ):
-        old_settings_value = restql_settings.FORCE_QUERY_USAGE
-        restql_settings.FORCE_QUERY_USAGE = True
+        settings.RESTQL = {"FORCE_QUERY_USAGE": True}
 
         response = client.get(url)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -300,7 +309,15 @@ class TestOnlyInEagerLoading:
         response = client.get(url, {"query": "{text}"})
         assert response.status_code == status.HTTP_200_OK
 
-        restql_settings.FORCE_QUERY_USAGE = old_settings_value
+    @pytest.mark.urls(__name__)
+    def test_dont_force_query_usage_on_put_method(
+        self, client, instance, url, settings
+    ):
+        settings.RESTQL = {"FORCE_QUERY_USAGE": True}
+        url = reverse("view-update", args=(instance.id,))
+
+        response = client.put(url)
+        assert response.status_code == status.HTTP_200_OK
 
     @pytest.mark.urls(__name__)
     def test_using_aliases(
@@ -340,20 +357,15 @@ class TestOnlyInEagerLoading:
 
     @pytest.mark.urls(__name__)
     def test_many_to_one_rel_ignored_when_no_query(
-        self, client, django_assert_max_num_queries, instance, settings
+        self, client, django_assert_max_num_queries, instance
     ):
         url = reverse("authors-view")
 
-        with django_assert_max_num_queries(1) as x:
-            response = client.get(url)
+        with django_assert_max_num_queries(2) as x:
+            response = client.get(url, {"query": "{first_name,posts{id}}"})
             assert response.status_code == status.HTTP_200_OK
             expected_fields = {
-                "samplepost.id",
-                "samplepost.author_id",
-                "samplepost.title",
-                "samplepost.text",
                 "sampleauthor.first_name",
-                "sampleauthor.last_name",
                 "sampleauthor.id",
             }
             assert expected_fields == get_fields_queried(x)

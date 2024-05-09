@@ -1148,7 +1148,12 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
                 elif any([nested_key.startswith("-") for nested_key in nested_keys]):
                     return queryset
                 elif key not in only_mapping.keys():
-                    nested_field_model = model._meta.get_field(key).related_model
+                    nested_field = model._meta.get_field(key)
+                    # Impossible to use .only on ManyToOneRel field
+                    if isinstance(nested_field, ManyToOneRel):
+                        continue
+
+                    nested_field_model = nested_field.related_model
                     nested_fields = self.parse_model_fields(
                         nested_field_model, nested_keys
                     )
@@ -1170,9 +1175,10 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
     def get_queryset(self):
         query_param_name = restql_settings.QUERY_PARAM_NAME
         query_in_params = self.request.query_params.get(query_param_name)
-        if restql_settings.FORCE_QUERY_USAGE and not query_in_params:
+        is_get_method = self.request.method == "GET"
+        if restql_settings.FORCE_QUERY_USAGE and is_get_method and not query_in_params:
             raise ValidationError(
-                _(f"Parametr '{query_param_name}' musi zostać zdefiniowany.")
+                _(f"'{query_param_name}' must be defined in query params.")
             )
         return super().get_queryset()
 
