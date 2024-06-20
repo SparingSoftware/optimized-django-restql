@@ -1047,6 +1047,7 @@ class NestedUpdateMixin(BaseNestedMixin):
 class OptimizedEagerLoadingMixin(EagerLoadingMixin):
     only = {}
     always_apply_only = False
+    force_query_usage = None
     to_select = []
 
     @property
@@ -1054,6 +1055,12 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
         if hasattr(self, "always_apply_only"):
             return self.always_apply_only
         return False
+
+    @property
+    def should_force_query_usage(self):
+        if self.force_query_usage is None:
+            return restql_settings.FORCE_QUERY_USAGE
+        return self.force_query_usage
 
     def get_only_mapping(self):
         if hasattr(self, "only"):
@@ -1176,7 +1183,7 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
         query_param_name = restql_settings.QUERY_PARAM_NAME
         query_in_params = self.request.query_params.get(query_param_name)
         is_get_method = self.request.method == "GET"
-        if restql_settings.FORCE_QUERY_USAGE and is_get_method and not query_in_params:
+        if self.should_force_query_usage and is_get_method and not query_in_params:
             raise ValidationError(
                 _(f"'{query_param_name}' must be defined in query params.")
             )
