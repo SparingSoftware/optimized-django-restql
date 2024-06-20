@@ -309,6 +309,33 @@ class TestOnlyInEagerLoading:
         response = client.get(url, {"query": "{text}"})
         assert response.status_code == status.HTTP_200_OK
 
+    @pytest.mark.parametrize(
+        ("settings_force_flag", "view_force_flag", "status_code"),
+        (
+            (False, True, status.HTTP_400_BAD_REQUEST),
+            (False, False, status.HTTP_200_OK),
+            (True, True, status.HTTP_400_BAD_REQUEST),
+            (True, False, status.HTTP_200_OK),
+        )
+    )
+    @pytest.mark.urls(__name__)
+    def test_force_query_usage_defined_in_view(
+        self,
+        client,
+        instance,
+        settings,
+        settings_force_flag,
+        monkeypatch,
+        url,
+        view_force_flag,
+        status_code,
+    ):
+        monkeypatch.setattr(SampleViewSet, "force_query_usage", view_force_flag)
+        settings.RESTQL = {"FORCE_QUERY_USAGE": settings_force_flag}
+
+        response = client.get(url)
+        assert response.status_code == status_code
+
     @pytest.mark.urls(__name__)
     def test_dont_force_query_usage_on_put_method(
         self, client, instance, url, settings
