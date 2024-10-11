@@ -46,6 +46,7 @@ class SamplePostSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     def get_first_letter(self, obj):
         return obj.title[0]
 
+
 class SamplePostWithAnnotationSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     author_full_name = serializers.CharField()
 
@@ -403,7 +404,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-
     def test_many_to_one_rel_ignored_when_no_query(
         self, client, django_assert_max_num_queries, instance
     ):
@@ -417,6 +417,7 @@ class TestOnlyInEagerLoading:
                 "sampleauthor.id",
             }
             assert expected_fields == get_fields_queried(x)
+
 
 @pytest.mark.django_db
 @pytest.mark.urls(__name__)
