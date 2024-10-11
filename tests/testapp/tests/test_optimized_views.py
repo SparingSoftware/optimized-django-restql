@@ -1,7 +1,7 @@
 import pytest
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
-from django.db.models import QuerySet, Value
+from django.db.models import Value
 from django.db.models.functions import Concat
 from django.urls import path, reverse
 from django_restql.mixins import DynamicFieldsMixin, OptimizedEagerLoadingMixin
@@ -106,7 +106,7 @@ class SamplePostWithAnnotationView(
     annotated_fields = ("author_full_name",)
 
     @staticmethod
-    def annotate_author_full_name(queryset: QuerySet[SamplePost]):
+    def annotate_author_full_name(queryset):
         return queryset.annotate(
             author_full_name=Concat(
                 "author__first_name", Value(" "), "author__last_name",
