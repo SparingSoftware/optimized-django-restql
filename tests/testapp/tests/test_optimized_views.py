@@ -1,5 +1,8 @@
 import pytest
 from django.core.exceptions import FieldDoesNotExist
+from django.db import models
+from django.db.models import Value
+from django.db.models.functions import Concat
 from django.urls import path, reverse
 from django_restql.mixins import DynamicFieldsMixin, OptimizedEagerLoadingMixin
 from model_bakery import baker
@@ -44,6 +47,15 @@ class SamplePostSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
         return obj.title[0]
 
 
+class SamplePostWithAnnotationSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
+    author_full_name = serializers.CharField()
+
+    class Meta:
+        model = SamplePost
+        fields = ("id", "author_full_name")
+        read_only_fields = fields
+
+
 class SampleTagSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     class Meta:
         model = SampleTag
@@ -82,6 +94,27 @@ class SampleViewSet(
     always_apply_only = True
 
 
+class SamplePostWithAnnotationView(
+    OptimizedEagerLoadingMixin, UpdateAPIView, ListAPIView
+):
+    queryset = SamplePost.objects.all()
+    serializer_class = SamplePostWithAnnotationSerializer
+    permission_classes = []
+    only = {"author_full_name": []}
+    pagination_class = None
+    always_apply_only = True
+    annotated_fields = ("author_full_name",)
+
+    @staticmethod
+    def annotate_author_full_name(queryset):
+        return queryset.annotate(
+            author_full_name=Concat(
+                "author__first_name", Value(" "), "author__last_name",
+                output_field=models.CharField(),
+            ),
+        )
+
+
 class SampleAuthorViewSet(
     OptimizedEagerLoadingMixin,
     ListAPIView,
@@ -99,10 +132,16 @@ urlpatterns = [
     path("", SampleViewSet.as_view(), name="view"),
     path("<int:pk>", SampleViewSet.as_view(), name="view-update"),
     path("authors/", SampleAuthorViewSet.as_view(), name="authors-view"),
+    path(
+        "posts-with-annotation/",
+        SamplePostWithAnnotationView.as_view(),
+        name="posts-annotation-view",
+    ),
 ]
 
 
 @pytest.mark.django_db
+@pytest.mark.urls(__name__)
 class TestOnlyInEagerLoading:
     @pytest.fixture
     def instance(self):
@@ -112,7 +151,6 @@ class TestOnlyInEagerLoading:
     def url(self):
         return reverse("view")
 
-    @pytest.mark.urls(__name__)
     def test_fields_correctly_selected(
         self, client, django_assert_max_num_queries, instance, url
     ):
@@ -126,13 +164,11 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_multiple_records(self, client, django_assert_max_num_queries, url):
         baker.make(SamplePost, _quantity=10)
         with django_assert_max_num_queries(1):
             client.get(url, {"query": "{title,author{id}}"})
 
-    @pytest.mark.urls(__name__)
     def test_no_query(self, client, django_assert_max_num_queries, instance, url):
         with django_assert_max_num_queries(1) as x:
             response = client.get(url)
@@ -148,7 +184,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_using_all_fields(
         self, client, django_assert_max_num_queries, instance, url
     ):
@@ -165,7 +200,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_custom_only(self, client, django_assert_max_num_queries, instance, url):
         with django_assert_max_num_queries(1) as x:
             client.get(url, {"query": "{first_letter}"})
@@ -175,7 +209,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_custom_only_in_foreign_key(
         self, client, django_assert_max_num_queries, instance, url
     ):
@@ -189,7 +222,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_using_nested_all_fields(
         self, client, django_assert_max_num_queries, instance, url
     ):
@@ -204,7 +236,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_using_exclude_operator(
         self, client, django_assert_max_num_queries, instance, url
     ):
@@ -222,7 +253,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_incorrect_view(
         self, client, django_assert_max_num_queries, instance, url, monkeypatch
     ):
@@ -230,7 +260,6 @@ class TestOnlyInEagerLoading:
         with pytest.raises(FieldDoesNotExist):
             client.get(url)
 
-    @pytest.mark.urls(__name__)
     def test_m2m_field(
         self, client, django_assert_max_num_queries, instance, url, monkeypatch
     ):
@@ -252,7 +281,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_m2m_field_no_query(
         self, client, django_assert_max_num_queries, instance, url, monkeypatch
     ):
@@ -279,7 +307,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_no_query_only_serializer_fields(
         self, client, django_assert_max_num_queries, instance, url, monkeypatch
     ):
@@ -297,7 +324,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_force_query_usage(
         self, client, instance, url, settings
     ):
@@ -318,7 +344,6 @@ class TestOnlyInEagerLoading:
             (True, False, status.HTTP_200_OK),
         )
     )
-    @pytest.mark.urls(__name__)
     def test_force_query_usage_defined_in_view(
         self,
         client,
@@ -336,7 +361,6 @@ class TestOnlyInEagerLoading:
         response = client.get(url)
         assert response.status_code == status_code
 
-    @pytest.mark.urls(__name__)
     def test_dont_force_query_usage_on_put_method(
         self, client, instance, url, settings
     ):
@@ -346,7 +370,6 @@ class TestOnlyInEagerLoading:
         response = client.put(url)
         assert response.status_code == status.HTTP_200_OK
 
-    @pytest.mark.urls(__name__)
     def test_using_aliases(
         self, client, django_assert_max_num_queries, instance, url, settings
     ):
@@ -364,7 +387,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_incorrect_parameters(
         self, client, django_assert_max_num_queries, instance, url, settings
     ):
@@ -382,7 +404,6 @@ class TestOnlyInEagerLoading:
             }
             assert expected_fields == get_fields_queried(x)
 
-    @pytest.mark.urls(__name__)
     def test_many_to_one_rel_ignored_when_no_query(
         self, client, django_assert_max_num_queries, instance
     ):
@@ -394,5 +415,39 @@ class TestOnlyInEagerLoading:
             expected_fields = {
                 "sampleauthor.first_name",
                 "sampleauthor.id",
+            }
+            assert expected_fields == get_fields_queried(x)
+
+
+@pytest.mark.django_db
+@pytest.mark.urls(__name__)
+class TestSamplePostWithAnnotationView:
+    @pytest.fixture
+    def url(self):
+        return reverse("posts-annotation-view")
+
+    def test_annotated_author_full_name(self, client, url):
+        baker.make(SamplePost, author__first_name="John", author__last_name="Doe")
+
+        response = client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data[0]["author_full_name"] == "John Doe"
+
+    def test_query_author_full_name(self, client, url):
+        baker.make(SamplePost, author__first_name="John", author__last_name="Doe")
+
+        response = client.get(url, {"query": "{author_full_name}"})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data[0]["author_full_name"] == "John Doe"
+
+    def test_author_full_name_not_queried(self, client, url, django_assert_max_num_queries):
+        baker.make(SamplePost, author__first_name="John", author__last_name="Doe")
+
+        with django_assert_max_num_queries(1) as x:
+            client.get(url, {"query": "{id}"})
+            expected_fields = {
+                "samplepost.id",
             }
             assert expected_fields == get_fields_queried(x)

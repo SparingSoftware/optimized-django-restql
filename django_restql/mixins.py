@@ -1,4 +1,4 @@
-from django.db.models import Prefetch
+from django.db.models import Prefetch, QuerySet
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.fields.related import ManyToManyRel, ManyToOneRel
 from django.http import QueryDict
@@ -1049,6 +1049,7 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
     always_apply_only = False
     force_query_usage = None
     to_select = []
+    annotated_fields = []
 
     @property
     def should_always_apply_only(self):
@@ -1187,7 +1188,8 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
             raise ValidationError(
                 _(f"'{query_param_name}' must be defined in query params.")
             )
-        return super().get_queryset()
+        queryset = super().get_queryset()
+        return self.annotate_fields(queryset=queryset)
 
     def parse_model_fields(self, model, fields, skip_non_model_fields=True):
         results = []
@@ -1213,3 +1215,14 @@ class OptimizedEagerLoadingMixin(EagerLoadingMixin):
             results.append(field)
 
         return results
+
+    def annotate_fields(self, queryset: QuerySet) -> QuerySet:
+        for field_name in self.annotated_fields:
+            if self.should_annotate_field(field_name):
+                queryset = getattr(self, f"annotate_{field_name}")(queryset)
+
+        return queryset
+
+    def should_annotate_field(self, field_name: str) -> bool:
+        query = self.get_dict_parsed_restql_query(self.parsed_restql_query)
+        return "*" in query or field_name in query
